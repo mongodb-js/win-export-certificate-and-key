@@ -21,6 +21,12 @@
     "require": "./index.js",
     "import": "./.esm-wrapper.mjs"
   },
+  "homepage": "https://github.com/mongodb-js/win-export-certificate-and-key",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mongodb-js/win-export-certificate-and-key.git"
+  },
+  "bugs": "https://github.com/mongodb-js/win-export-certificate-and-key/issues",
   "typings": "index.d.ts",
   "files": [
     "binding.cc",
