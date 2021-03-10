@@ -28,6 +28,7 @@
   },
   "bugs": "https://github.com/mongodb-js/win-export-certificate-and-key/issues",
   "typings": "index.d.ts",
+  "os": ["win32"],
   "files": [
     "binding.cc",
     "binding.gyp",
