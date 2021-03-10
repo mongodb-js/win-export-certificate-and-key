@@ -1,6 +1,6 @@
 {
   "name": "win-export-certificate-and-key",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Export a certificate and its corresponding private key from the Windows CA store",
   "main": "index.js",
   "scripts": {
@@ -28,7 +28,9 @@
   },
   "bugs": "https://github.com/mongodb-js/win-export-certificate-and-key/issues",
   "typings": "index.d.ts",
-  "os": ["win32"],
+  "os": [
+    "win32"
+  ],
   "files": [
     "binding.cc",
     "binding.gyp",
