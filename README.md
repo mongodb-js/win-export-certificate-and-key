@@ -15,4 +15,4 @@ string or its thumbprint.
 
 You need to import `testkeys\certificate.pfx` manually into your local 
 CA store in order for the tests to pass. Make sure to import that certificate
-with the "exportable private key" option.
+with the "exportable private key" option. The password for the file is `pass`.
