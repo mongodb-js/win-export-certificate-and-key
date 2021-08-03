@@ -4,6 +4,8 @@
 
 using namespace Napi;
 
+namespace {
+
 // Naive RAII cleanup helper.
 struct Cleanup {
   std::function<void()> fn;
@@ -14,9 +16,9 @@ struct Cleanup {
 // Convert UTF-8 to a Windows UTF-16 WCHAR array.
 std::vector<WCHAR> MultiByteToWideChar(const std::string& in) {
   std::vector<WCHAR> ret;
-  int count = MultiByteToWideChar(CP_UTF8, 0, in.c_str(), in.size(), nullptr, 0);
+  int count = ::MultiByteToWideChar(CP_UTF8, 0, in.c_str(), in.size(), nullptr, 0);
   ret.resize(count + 1);
-  MultiByteToWideChar(CP_UTF8, 0, in.c_str(), in.size(), ret.data(), ret.size());
+  ::MultiByteToWideChar(CP_UTF8, 0, in.c_str(), in.size(), ret.data(), ret.size());
   return ret;
 }
 
@@ -129,9 +131,11 @@ Value ExportCertificate(const CallbackInfo& args) {
   return CertToBuffer(args.Env(), cert, password, args[3].ToBoolean());
 }
 
-static Object Init(Env env, Object exports) {
+}
+
+static Object InitWinExportCertAndKey(Env env, Object exports) {
   exports["exportCertificate"] = Function::New(env, ExportCertificate);
   return exports;
 }
 
-NODE_API_MODULE(win_export_cert, Init)
+NODE_API_MODULE(win_export_cert, InitWinExportCertAndKey)
