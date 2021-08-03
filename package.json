@@ -36,7 +36,8 @@
     "binding.gyp",
     "index.d.ts",
     "index.js",
-    "LICENSE"
+    "LICENSE",
+    ".esm-wrapper.mjs"
   ],
   "devDependencies": {
     "gen-esm-wrapper": "^1.1.1",
