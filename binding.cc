@@ -89,14 +89,20 @@ Value ExportCertificate(const CallbackInfo& args) {
   std::wstring password_buf = MultiByteToWideChar(args[0].ToString());
   LPCWSTR password = password_buf.data();
   std::wstring sys_store_name = MultiByteToWideChar(args[1].ToString());
-  HCERTSTORE sys_cs = CertOpenSystemStoreW(0, sys_store_name.data());
+  DWORD storeType = args[2].ToNumber().Uint32Value();
+  HCERTSTORE sys_cs = CertOpenStore(
+    CERT_STORE_PROV_SYSTEM,
+    0,
+    NULL,
+    storeType | CERT_STORE_READONLY_FLAG | CERT_STORE_DEFER_CLOSE_UNTIL_LAST_FREE_FLAG,
+    sys_store_name.data());
   if (!sys_cs) {
-    ThrowWindowsError(args.Env(), "CertOpenSystemStoreA()");
+    ThrowWindowsError(args.Env(), "CertOpenStore()");
   }
   Cleanup cleanup_sys_cs([&]() { CertCloseStore(sys_cs, 0); });
 
   PCCERT_CONTEXT cert = nullptr;
-  Object search_spec = args[2].ToObject();
+  Object search_spec = args[3].ToObject();
   if (search_spec.HasOwnProperty("thumbprint")) {
     Buffer<BYTE> thumbprint = search_spec.Get("thumbprint").As<Buffer<BYTE>>();
     CRYPT_HASH_BLOB thumbprint_blob = {
@@ -127,13 +133,23 @@ Value ExportCertificate(const CallbackInfo& args) {
 
   Cleanup cleanup_cert([&]() { CertFreeCertificateContext(cert); });
 
-  return CertToBuffer(args.Env(), cert, password, args[3].ToBoolean());
+  return CertToBuffer(args.Env(), cert, password, args[4].ToBoolean());
 }
 
 }
 
 static Object InitWinExportCertAndKey(Env env, Object exports) {
   exports["exportCertificate"] = Function::New(env, ExportCertificate);
+  Object storeTypes = Object::New(env);
+  storeTypes["CERT_SYSTEM_STORE_CURRENT_SERVICE"] = Number::New(env, CERT_SYSTEM_STORE_CURRENT_SERVICE);
+  storeTypes["CERT_SYSTEM_STORE_CURRENT_USER"] = Number::New(env, CERT_SYSTEM_STORE_CURRENT_USER);
+  storeTypes["CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY"] = Number::New(env, CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY);
+  storeTypes["CERT_SYSTEM_STORE_LOCAL_MACHINE"] = Number::New(env, CERT_SYSTEM_STORE_LOCAL_MACHINE);
+  storeTypes["CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE"] = Number::New(env, CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE);
+  storeTypes["CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY"] = Number::New(env, CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY);
+  storeTypes["CERT_SYSTEM_STORE_SERVICES"] = Number::New(env, CERT_SYSTEM_STORE_SERVICES);
+  storeTypes["CERT_SYSTEM_STORE_USERS"] = Number::New(env, CERT_SYSTEM_STORE_USERS);
+  exports["storeTypes"] = storeTypes;
   return exports;
 }
 
