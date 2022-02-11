@@ -56,7 +56,7 @@ void ThrowWindowsError(Env env, const char* call) {
 
 // Create a temporary certificate store, add 'cert' to it, and then
 // export it (using 'password' for encryption).
-Buffer<BYTE> CertToBuffer(Env env, PCCERT_CONTEXT cert, LPCWSTR password, bool require_priv_key) {
+Buffer<BYTE> CertToBuffer(Env env, PCCERT_CONTEXT cert, LPCWSTR password, DWORD export_flags) {
   HCERTSTORE memstore = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0, 0, 0);
   if (!memstore) {
     ThrowWindowsError(env, "CertOpenStore(CERT_STORE_PROV_MEMORY)");
@@ -67,10 +67,6 @@ Buffer<BYTE> CertToBuffer(Env env, PCCERT_CONTEXT cert, LPCWSTR password, bool r
   }
 
   CRYPT_DATA_BLOB out = { 0, nullptr };
-  DWORD export_flags = EXPORT_PRIVATE_KEYS;
-  if (require_priv_key) {
-    export_flags |= REPORT_NO_PRIVATE_KEY | REPORT_NOT_ABLE_TO_EXPORT_PRIVATE_KEY;
-  }
   if (!PFXExportCertStoreEx(memstore, &out, password, nullptr, export_flags)) {
     ThrowWindowsError(env, "PFXExportCertStoreEx()");
   }
@@ -83,23 +79,47 @@ Buffer<BYTE> CertToBuffer(Env env, PCCERT_CONTEXT cert, LPCWSTR password, bool r
   return outbuf;
 }
 
+class CertStoreHandle {
+ public:
+  CertStoreHandle(HCERTSTORE store) : store_(store) {}
+  ~CertStoreHandle() { CertCloseStore(store_, 0); }
+  HCERTSTORE get() const { return store_; }
+  operator boolean() const { return !!get(); }
+
+  CertStoreHandle(CertStoreHandle&& other) : store_(other.store_) { other.store_ = nullptr; }
+  CertStoreHandle& operator=(CertStoreHandle&& other) {
+    this->~CertStoreHandle();
+    return *new(this)CertStoreHandle(std::move(other));
+  }
+
+ private:
+  CertStoreHandle(const CertStoreHandle&) = delete;
+  CertStoreHandle& operator=(const CertStoreHandle&) = delete;
+
+  HCERTSTORE store_;
+};
+
+CertStoreHandle CertOpenStore(Env env, const std::wstring& name, DWORD type) {
+  CertStoreHandle sys_cs = ::CertOpenStore(
+    CERT_STORE_PROV_SYSTEM,
+    0,
+    NULL,
+    type | CERT_STORE_READONLY_FLAG | CERT_STORE_DEFER_CLOSE_UNTIL_LAST_FREE_FLAG,
+    name.data());
+  if (!sys_cs) {
+    ThrowWindowsError(env, "CertOpenStore()");
+  }
+  return sys_cs;
+}
+
 // Export a given certificate from a system certificate store,
 // identified either by its thumbprint or its subject line.
 Value ExportCertificate(const CallbackInfo& args) {
   std::wstring password_buf = MultiByteToWideChar(args[0].ToString());
   LPCWSTR password = password_buf.data();
   std::wstring sys_store_name = MultiByteToWideChar(args[1].ToString());
-  DWORD storeType = args[2].ToNumber().Uint32Value();
-  HCERTSTORE sys_cs = CertOpenStore(
-    CERT_STORE_PROV_SYSTEM,
-    0,
-    NULL,
-    storeType | CERT_STORE_READONLY_FLAG | CERT_STORE_DEFER_CLOSE_UNTIL_LAST_FREE_FLAG,
-    sys_store_name.data());
-  if (!sys_cs) {
-    ThrowWindowsError(args.Env(), "CertOpenStore()");
-  }
-  Cleanup cleanup_sys_cs([&]() { CertCloseStore(sys_cs, 0); });
+  DWORD store_type = args[2].ToNumber().Uint32Value();
+  CertStoreHandle sys_cs = CertOpenStore(args.Env(), sys_store_name, store_type);
 
   PCCERT_CONTEXT cert = nullptr;
   Object search_spec = args[3].ToObject();
@@ -110,7 +130,7 @@ Value ExportCertificate(const CallbackInfo& args) {
       thumbprint.Data()
     };
     cert = CertFindCertificateInStore(
-        sys_cs,
+        sys_cs.get(),
         X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
         0,
         CERT_FIND_HASH,
@@ -118,7 +138,7 @@ Value ExportCertificate(const CallbackInfo& args) {
         nullptr);
   } else if (search_spec.HasOwnProperty("subject")) {
     cert = CertFindCertificateInStore(
-        sys_cs,
+        sys_cs.get(),
         X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
         0,
         CERT_FIND_SUBJECT_STR,
@@ -133,7 +153,11 @@ Value ExportCertificate(const CallbackInfo& args) {
 
   Cleanup cleanup_cert([&]() { CertFreeCertificateContext(cert); });
 
-  return CertToBuffer(args.Env(), cert, password, args[4].ToBoolean());
+  DWORD export_flags = EXPORT_PRIVATE_KEYS;
+  if (args[4].ToBoolean()) {
+    export_flags |= REPORT_NO_PRIVATE_KEY | REPORT_NOT_ABLE_TO_EXPORT_PRIVATE_KEY;
+  }
+  return CertToBuffer(args.Env(), cert, password, export_flags);
 }
 
 }
