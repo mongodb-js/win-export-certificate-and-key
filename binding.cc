@@ -13,13 +13,12 @@ struct Cleanup {
   ~Cleanup() { fn(); }
 };
 
-// Convert UTF-8 to a Windows UTF-16 WCHAR array.
-std::vector<WCHAR> MultiByteToWideChar(const std::string& in) {
-  std::vector<WCHAR> ret;
-  int count = ::MultiByteToWideChar(CP_UTF8, 0, in.c_str(), in.size(), nullptr, 0);
-  ret.resize(count + 1);
-  ::MultiByteToWideChar(CP_UTF8, 0, in.c_str(), in.size(), ret.data(), ret.size());
-  return ret;
+// Convert UTF-8 to a Windows UTF-16 wstring.
+std::wstring MultiByteToWideChar(Value value) {
+  static_assert(sizeof(std::wstring::value_type) == sizeof(std::u16string::value_type),
+      "wstring and u16string have the same value type on Windows");
+  std::u16string u16 = value.ToString();
+  return std::wstring(u16.begin(), u16.end());
 }
 
 // Throw an exception based on the last Windows error message.
@@ -44,9 +43,9 @@ void ThrowWindowsError(Env env, const char* call) {
       err_msg_buf[err_msg_len - 2] = '\0';
     }
   }
-  
+
   char buf[256];
-  snprintf(buf, 
+  snprintf(buf,
            sizeof(buf),
            "%s failed with: %s (0x%lx)",
            call,
@@ -80,29 +79,29 @@ Buffer<BYTE> CertToBuffer(Env env, PCCERT_CONTEXT cert, LPCWSTR password, bool r
   if (!PFXExportCertStoreEx(memstore, &out, password, nullptr, export_flags)) {
     ThrowWindowsError(env, "PFXExportCertStoreEx()");
   }
-  
+
   return outbuf;
 }
 
 // Export a given certificate from a system certificate store,
 // identified either by its thumbprint or its subject line.
 Value ExportCertificate(const CallbackInfo& args) {
-  std::vector<WCHAR> password_buf = MultiByteToWideChar(args[0].ToString());
+  std::wstring password_buf = MultiByteToWideChar(args[0].ToString());
   LPCWSTR password = password_buf.data();
-  std::string sys_store_name = args[1].ToString();
-  HCERTSTORE sys_cs = CertOpenSystemStoreA(0, sys_store_name.c_str());
+  std::wstring sys_store_name = MultiByteToWideChar(args[1].ToString());
+  HCERTSTORE sys_cs = CertOpenSystemStoreW(0, sys_store_name.data());
   if (!sys_cs) {
     ThrowWindowsError(args.Env(), "CertOpenSystemStoreA()");
   }
   Cleanup cleanup_sys_cs([&]() { CertCloseStore(sys_cs, 0); });
-  
+
   PCCERT_CONTEXT cert = nullptr;
   Object search_spec = args[2].ToObject();
   if (search_spec.HasOwnProperty("thumbprint")) {
     Buffer<BYTE> thumbprint = search_spec.Get("thumbprint").As<Buffer<BYTE>>();
-    CRYPT_HASH_BLOB thumbprint_blob = { 
+    CRYPT_HASH_BLOB thumbprint_blob = {
       static_cast<DWORD>(thumbprint.Length()),
-      thumbprint.Data() 
+      thumbprint.Data()
     };
     cert = CertFindCertificateInStore(
         sys_cs,
