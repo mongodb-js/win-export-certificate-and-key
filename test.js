@@ -1,9 +1,12 @@
 const tls = require('tls');
 const fs = require('fs');
 const assert = require('assert');
-const exportCertificate = require('./');
+const {
+  exportCertificateAndPrivateKey,
+  exportSystemCertificates
+ } = require('./');
 
-describe('exportCertificate', () => {
+describe('exportCertificateAndPrivateKey', () => {
   let tlsServer;
   let authorized;
   let resolveAuthorized;
@@ -37,12 +40,12 @@ describe('exportCertificate', () => {
 
   it('throws when no cert can be found', () => {
     assert.throws(() => {
-      exportCertificate({ subject: 'Banana Corp '});
+      exportCertificateAndPrivateKey({ subject: 'Banana Corp '});
     }, /CertFindCertificateInStore\(\) failed with: Cannot find object or property. \(0x80092004\)/);
   });
 
   it('loads a certificate based on its thumbprint', async() => {
-    const { passphrase, pfx } = exportCertificate({
+    const { passphrase, pfx } = exportCertificateAndPrivateKey({
       thumbprint: Buffer.from('d755afda2bbad2509d39eca5968553b9103305af', 'hex')
     });
     tls.connect({ ...tlsServerConnectOptions, passphrase, pfx });
@@ -50,10 +53,28 @@ describe('exportCertificate', () => {
   });
 
   it('loads a certificate based on its subject', async() => {
-    const { passphrase, pfx } = exportCertificate({
+    const { passphrase, pfx } = exportCertificateAndPrivateKey({
       subject: 'Internet Widgits Pty Ltd'
     });
     tls.connect({ ...tlsServerConnectOptions, passphrase, pfx });
     assert.strictEqual(await authorized, true);
+  });
+});
+
+describe('exportSystemCertificates', () => {
+  it('exports certificates from the ROOT store as .pem', () => {
+    const certs = exportSystemCertificates({ store: 'ROOT' });
+    assert.notStrictEqual(certs.length, 0);
+    for (const cert of certs) {
+      assert.match(cert.trim(), /^-----BEGIN CERTIFICATE-----[\s\S]+-----END CERTIFICATE-----$/);
+    }
+  });
+
+  it('exports certificates from the CA store as .pem', () => {
+    const certs = exportSystemCertificates({ store: 'CA' });
+    assert.notStrictEqual(certs.length, 0);
+    for (const cert of certs) {
+      assert.match(cert.trim(), /^-----BEGIN CERTIFICATE-----[\s\S]+-----END CERTIFICATE-----$/);
+    }
   });
 });

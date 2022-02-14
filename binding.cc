@@ -82,14 +82,28 @@ Buffer<BYTE> CertToBuffer(Env env, PCCERT_CONTEXT cert, LPCWSTR password, DWORD 
 class CertStoreHandle {
  public:
   CertStoreHandle(HCERTSTORE store) : store_(store) {}
-  ~CertStoreHandle() { CertCloseStore(store_, 0); }
+  ~CertStoreHandle() {
+    CertCloseStore(store_, 0);
+    if (current_cert_) {
+      CertFreeCertificateContext(current_cert_);
+    }
+  }
   HCERTSTORE get() const { return store_; }
   operator boolean() const { return !!get(); }
 
-  CertStoreHandle(CertStoreHandle&& other) : store_(other.store_) { other.store_ = nullptr; }
+  CertStoreHandle(CertStoreHandle&& other)
+    : store_(other.store_), current_cert_(other.current_cert_) {
+    other.store_ = nullptr;
+    other.current_cert_ = nullptr;
+  }
   CertStoreHandle& operator=(CertStoreHandle&& other) {
     this->~CertStoreHandle();
     return *new(this)CertStoreHandle(std::move(other));
+  }
+
+  PCCERT_CONTEXT next() {
+    current_cert_ = CertEnumCertificatesInStore(store_, current_cert_);
+    return current_cert_;
   }
 
  private:
@@ -97,6 +111,7 @@ class CertStoreHandle {
   CertStoreHandle& operator=(const CertStoreHandle&) = delete;
 
   HCERTSTORE store_;
+  PCCERT_CONTEXT current_cert_ = nullptr;
 };
 
 CertStoreHandle CertOpenStore(Env env, const std::wstring& name, DWORD type) {
@@ -112,9 +127,24 @@ CertStoreHandle CertOpenStore(Env env, const std::wstring& name, DWORD type) {
   return sys_cs;
 }
 
+Value ExportAllCertificates(const CallbackInfo& args) {
+  std::wstring sys_store_name = MultiByteToWideChar(args[0].ToString());
+  DWORD store_type = args[1].ToNumber().Uint32Value();
+  CertStoreHandle sys_cs = CertOpenStore(args.Env(), sys_store_name, store_type);
+
+  PCCERT_CONTEXT cert;
+  Array result = Array::New(args.Env());
+  size_t index = 0;
+  while (cert = sys_cs.next()) {
+    Buffer<BYTE> buf = CertToBuffer(args.Env(), cert, L"", 0);
+    result[index++] = buf;
+  }
+  return result;
+}
+
 // Export a given certificate from a system certificate store,
 // identified either by its thumbprint or its subject line.
-Value ExportCertificate(const CallbackInfo& args) {
+Value ExportCertificateAndKey(const CallbackInfo& args) {
   std::wstring password_buf = MultiByteToWideChar(args[0].ToString());
   LPCWSTR password = password_buf.data();
   std::wstring sys_store_name = MultiByteToWideChar(args[1].ToString());
@@ -163,7 +193,8 @@ Value ExportCertificate(const CallbackInfo& args) {
 }
 
 static Object InitWinExportCertAndKey(Env env, Object exports) {
-  exports["exportCertificate"] = Function::New(env, ExportCertificate);
+  exports["exportCertificateAndKey"] = Function::New(env, ExportCertificateAndKey);
+  exports["exportAllCertificates"] = Function::New(env, ExportAllCertificates);
   Object storeTypes = Object::New(env);
   storeTypes["CERT_SYSTEM_STORE_CURRENT_SERVICE"] = Number::New(env, CERT_SYSTEM_STORE_CURRENT_SERVICE);
   storeTypes["CERT_SYSTEM_STORE_CURRENT_USER"] = Number::New(env, CERT_SYSTEM_STORE_CURRENT_USER);
