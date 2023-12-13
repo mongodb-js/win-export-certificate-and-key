@@ -43,6 +43,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
+      - name: Use Node.js v18.x
+        if: matrix.language == 'cpp'
+        uses: actions/setup-node@8f152de45cc393bb48ce5d89d36b731f54556e65 # v4.0.0
+        with:
+          node-version: 18.x
+
+      - name: Npm install
+        if: matrix.language == 'cpp'
+        run: |
+          npm install
+
       # Initializes the CodeQL tools for scanning.
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v2
@@ -62,12 +73,6 @@ jobs:
               - '**/*.spec.ts'
               - '**/*.test.tsx'
               - '**/*.spec.tsx'
-
-      - name: Use Node.js v18.x
-        if: matrix.language == 'cpp'
-        uses: actions/setup-node@8f152de45cc393bb48ce5d89d36b731f54556e65 # v4.0.0
-        with:
-          node-version: 18.x
 
       - name: Build cpp
         if: matrix.language == 'cpp'
