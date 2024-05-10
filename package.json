@@ -1,6 +1,6 @@
 {
   "name": "win-export-certificate-and-key",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "Export a certificate and its corresponding private key from the Windows CA store",
   "main": "index.js",
   "scripts": {
