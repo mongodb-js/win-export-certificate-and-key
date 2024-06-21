@@ -1,10 +1,10 @@
+'use strict';
 const {
   exportCertificateAndKey,
   exportAllCertificates,
   storeTypes
 } = require('bindings')('win_export_cert');
 const { randomBytes } = require('crypto');
-const forge = require('node-forge');
 const util = require('util');
 
 const DEFAULT_STORE_TYPE_LIST = ['CERT_SYSTEM_STORE_LOCAL_MACHINE', 'CERT_SYSTEM_STORE_CURRENT_USER'];
@@ -28,18 +28,8 @@ function exportSystemCertificates(opts = {}) {
 
   const result = new Set();
   for (const storeType of storeTypeList) {
-    const certs = exportAllCertificates(store || 'ROOT', storeType);
-    for (const cert of certs) {
-      // Convert PKCS#12 (aka .pfx) to PEM
-      const asn1 = forge.asn1.fromDer(cert.toString('latin1'));
-      const pkcs12 = forge.pkcs12.pkcs12FromAsn1(asn1, '');
-      const certBags = pkcs12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag];
-      for (const bag of certBags) {
-        if (bag.cert) {
-          const pem = forge.pki.certificateToPem(bag.cert);
-          result.add(pem);
-        }
-      }
+    for (const cert of exportAllCertificates(store || 'ROOT', storeType)) {
+      result.add(cert);
     }
   }
 
