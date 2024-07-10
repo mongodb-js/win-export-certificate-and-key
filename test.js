@@ -1,3 +1,4 @@
+'use strict';
 const tls = require('tls');
 const fs = require('fs');
 const assert = require('assert');
