@@ -4,7 +4,7 @@ const {
   exportAllCertificates,
   storeTypes
 } = require('bindings')('win_export_cert');
-const { randomBytes } = require('crypto');
+const { randomBytes, X509Certificate } = require('crypto');
 const util = require('util');
 
 const DEFAULT_STORE_TYPE_LIST = ['CERT_SYSTEM_STORE_LOCAL_MACHINE', 'CERT_SYSTEM_STORE_CURRENT_USER'];
@@ -29,7 +29,8 @@ function exportSystemCertificates(opts = {}) {
   const result = new Set();
   for (const storeType of storeTypeList) {
     for (const cert of exportAllCertificates(store || 'ROOT', storeType)) {
-      result.add(cert);
+      // X509Certificate was added in Node.js 15 and accepts DER as input, but .toString() returns PEM
+      result.add(new X509Certificate(cert).toString());
     }
   }
 
