@@ -3,9 +3,6 @@
 #include <napi.h>
 #include <windows.h>
 #include <wincrypt.h>
-#include <openssl/err.h>
-#include <openssl/x509.h>
-#include <openssl/pem.h>
 
 using namespace Napi;
 
@@ -59,13 +56,6 @@ void ThrowWindowsError(Env env, const char* call) {
   throw Error::New(env, buf);
 }
 
-void ThrowOpenSSLError(Env env, const char* call) {
-  std::string error = call;
-  error += " failed with: ";
-  error += ERR_error_string(ERR_get_error(), nullptr);
-  throw Error::New(env, error);
-}
-
 // Create a temporary certificate store, add 'cert' to it, and then
 // export it (using 'password' for encryption).
 Buffer<BYTE> CertToBuffer(Env env, PCCERT_CONTEXT cert, LPCWSTR password, DWORD export_flags) {
@@ -89,33 +79,6 @@ Buffer<BYTE> CertToBuffer(Env env, PCCERT_CONTEXT cert, LPCWSTR password, DWORD 
   }
 
   return outbuf;
-}
-
-// Export a X.509 certificate (which does not include a key) as a PEM string.
-String CertToPEMBuffer(Env env, PCCERT_CONTEXT cert) {
-  const unsigned char* pbCertEncoded = reinterpret_cast<const unsigned char*>(cert->pbCertEncoded);
-  X509* x509cert = d2i_X509(nullptr, &pbCertEncoded, cert->cbCertEncoded);
-  if (!x509cert) {
-    ThrowOpenSSLError(env, "d2i_X509()");
-  }
-  Cleanup cleanup_cert([&]() { X509_free(x509cert); });
-
-  BIO* bio = BIO_new(BIO_s_mem());
-  if (!bio) {
-    ThrowOpenSSLError(env, "BIO_new()");
-  }
-  Cleanup cleanup_bio([&]() { BIO_free(bio); });
-
-  if (!PEM_write_bio_X509(bio, x509cert)) {
-    ThrowOpenSSLError(env, "PEM_write_bio_X509()");
-  }
-
-  char* string_data = nullptr;
-  long string_length = BIO_get_mem_data(bio, &string_data);
-  if (!string_data || static_cast<uintmax_t>(string_length) > std::numeric_limits<size_t>::max()) {
-    ThrowOpenSSLError(env, "BIO_get_mem_data()");
-  }
-  return String::New(env, string_data, string_length);
 }
 
 class CertStoreHandle {
@@ -175,7 +138,7 @@ Value ExportAllCertificates(const CallbackInfo& args) {
   Array result = Array::New(args.Env());
   size_t index = 0;
   while (cert = sys_cs.next()) {
-    String buf = CertToPEMBuffer(args.Env(), cert);
+    Buffer<BYTE> buf = Buffer<BYTE>::Copy(args.Env(), cert->pbCertEncoded, cert->cbCertEncoded);
     result[index++] = buf;
   }
   return result;

@@ -47,11 +47,3 @@ This functions returns an array of PEM-formatted certificates.
 You need to import `testkeys\certificate.pfx` manually into your local
 CA store in order for the tests to pass. Make sure to import that certificate
 with the "exportable private key" option. The password for the file is `pass`.
-
-## Compatibility
-
-Current versions of this package use OpenSSL to perform a format conversion
-from DER to PEM. This means that, unlike other Node-API addons, this addon
-has a stronger dependency on the ABI exposed by Node.js, and in particular
-may need to be updated once Node.js starts using OpenSSL 4.x (which is not
-planned at the time of writing).
