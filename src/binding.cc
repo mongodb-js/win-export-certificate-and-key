@@ -5,6 +5,17 @@ namespace {
 using namespace Napi;
 using namespace WinExportCertificateAndKey;
 
+Array BufferListToArray(Env env, const std::vector<std::vector<BYTE>>& vec) {
+  Array ret = Array::New(env);
+  if (vec.size() > static_cast<uint32_t>(-1)) {
+    throw std::runtime_error("result length exceeds uint32 max");
+  }
+  for (uint32_t i = 0; i < vec.size(); i++) {
+    ret[i] = Buffer<BYTE>::Copy(env, vec[i].data(), vec[i].size());
+  }
+  return ret;
+}
+
 // Convert UTF-8 to a Windows UTF-16 wstring.
 std::wstring MultiByteToWideChar(Value value) {
   static_assert(sizeof(std::wstring::value_type) == sizeof(std::u16string::value_type),
@@ -18,16 +29,8 @@ Value ExportAllCertificatesSync(const CallbackInfo& args) {
   DWORD store_type = args[1].ToNumber().Uint32Value();
 
   try {
-    std::vector<std::vector<BYTE>> certs =
-        ExportAllCertificates(sys_store_name, store_type);
-    if (certs.size() > static_cast<uint32_t>(-1)) {
-      throw std::runtime_error("result length exceeds uint32 max");
-    }
-    Array result = Array::New(args.Env());
-    for (uint32_t i = 0; i < certs.size(); i++) {
-      result[i] = Buffer<BYTE>::Copy(args.Env(), certs[i].data(), certs[i].size());
-    }
-    return result;
+    return BufferListToArray(
+        args.Env(), ExportAllCertificates(sys_store_name, store_type));
   } catch (const std::exception& e) {
     throw Error::New(args.Env(), e.what());
   }
@@ -36,28 +39,25 @@ Value ExportAllCertificatesSync(const CallbackInfo& args) {
 // Export a given certificate from a system certificate store,
 // identified either by its thumbprint or its subject line.
 Value ExportCertificateAndKeySync(const CallbackInfo& args) {
-  std::wstring password_buf = MultiByteToWideChar(args[0].ToString());
-  std::wstring sys_store_name = MultiByteToWideChar(args[1].ToString());
-  DWORD store_type = args[2].ToNumber().Uint32Value();
-  bool use_thumbprint;
-  std::vector<BYTE> thumbprint;
-  std::wstring subject;
-  bool require_private_key = args[4].ToBoolean();
+  ExportCertificateAndKeyArgs exp_args;
+  exp_args.password_buf = MultiByteToWideChar(args[0].ToString());
+  exp_args.sys_store_name = MultiByteToWideChar(args[1].ToString());
+  exp_args.store_type = args[2].ToNumber().Uint32Value();
+  exp_args.require_private_key = args[4].ToBoolean();
 
   Object search_spec = args[3].ToObject();
   if (search_spec.HasOwnProperty("thumbprint")) {
-    use_thumbprint = true;
-    Buffer<BYTE> thumbprint_buf = search_spec.Get("thumbprint").As<Buffer<BYTE>>();
-    thumbprint = {thumbprint_buf.Data(), thumbprint_buf.Data() + thumbprint_buf.Length()};
+    exp_args.use_thumbprint = true;
+    Buffer<BYTE> thumbprint = search_spec.Get("thumbprint").As<Buffer<BYTE>>();
+    exp_args.thumbprint = {thumbprint.Data(), thumbprint.Data() + thumbprint.Length()};
   } else if (search_spec.HasOwnProperty("subject")) {
-    use_thumbprint = false;
-    subject = MultiByteToWideChar(search_spec.Get("subject").ToString());
+    exp_args.use_thumbprint = false;
+    exp_args.subject = MultiByteToWideChar(search_spec.Get("subject").ToString());
   } else {
     throw Error::New(args.Env(), "Need to specify either `thumbprint` or `subject`");
   }
   try {
-    auto result = ExportCertificateAndKey(
-        store_type, sys_store_name, use_thumbprint, thumbprint, subject, password_buf, require_private_key);
+    auto result = ExportCertificateAndKey(exp_args);
     return Buffer<BYTE>::Copy(args.Env(), result.data(), result.size());
   } catch (const std::exception& e) {
     throw Error::New(args.Env(), e.what());

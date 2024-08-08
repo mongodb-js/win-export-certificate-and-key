@@ -4,14 +4,17 @@
 #include <windows.h>
 
 namespace WinExportCertificateAndKey {
-std::vector<BYTE> ExportCertificateAndKey(
-    DWORD store_type,
-    const std::wstring& sys_store_name,
-    bool use_thumbprint,
-    const std::vector<BYTE>& thumbprint,
-    const std::wstring& subject,
-    const std::wstring& password_buf,
-    bool require_private_key);
+struct ExportCertificateAndKeyArgs {
+  DWORD store_type;
+  std::wstring sys_store_name;
+  bool use_thumbprint;
+  std::vector<BYTE> thumbprint;
+  std::wstring subject;
+  std::wstring password_buf;
+  bool require_private_key;
+};
+
+std::vector<BYTE> ExportCertificateAndKey(const ExportCertificateAndKeyArgs& args);
 
 std::vector<std::vector<BYTE>> ExportAllCertificates(
     const std::wstring& sys_store_name, DWORD store_type);

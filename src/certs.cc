@@ -132,22 +132,15 @@ std::vector<std::vector<BYTE>> ExportAllCertificates(
   return result;
 }
 
-std::vector<BYTE> ExportCertificateAndKey(
-    DWORD store_type,
-    const std::wstring& sys_store_name,
-    bool use_thumbprint,
-    const std::vector<BYTE>& thumbprint,
-    const std::wstring& subject,
-    const std::wstring& password_buf,
-    bool require_private_key) {
-  LPCWSTR password = password_buf.data();
-  CertStoreHandle sys_cs = CertOpenStore(sys_store_name, store_type);
+std::vector<BYTE> ExportCertificateAndKey(const ExportCertificateAndKeyArgs& args) {
+  LPCWSTR password = args.password_buf.data();
+  CertStoreHandle sys_cs = CertOpenStore(args.sys_store_name, args.store_type);
   PCCERT_CONTEXT cert = nullptr;
 
-  if (use_thumbprint) {
+  if (args.use_thumbprint) {
     CRYPT_HASH_BLOB thumbprint_blob = {
-      static_cast<DWORD>(thumbprint.size()),
-      const_cast<BYTE*>(thumbprint.data())
+      static_cast<DWORD>(args.thumbprint.size()),
+      const_cast<BYTE*>(args.thumbprint.data())
     };
     cert = CertFindCertificateInStore(
         sys_cs.get(),
@@ -162,7 +155,7 @@ std::vector<BYTE> ExportCertificateAndKey(
         X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
         0,
         CERT_FIND_SUBJECT_STR,
-        subject.data(),
+        args.subject.data(),
         nullptr);
   } 
   
@@ -173,7 +166,7 @@ std::vector<BYTE> ExportCertificateAndKey(
   Cleanup cleanup_cert([&]() { CertFreeCertificateContext(cert); });
 
   DWORD export_flags = EXPORT_PRIVATE_KEYS;
-  if (require_private_key) {
+  if (args.require_private_key) {
     export_flags |= REPORT_NO_PRIVATE_KEY | REPORT_NOT_ABLE_TO_EXPORT_PRIVATE_KEY;
   }
   return CertToBuffer(cert, password, export_flags);
