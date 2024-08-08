@@ -24,7 +24,7 @@ std::wstring MultiByteToWideChar(Value value) {
 }
 
 // Throw an exception based on the last Windows error message.
-void ThrowWindowsError(Env env, const char* call) {
+void ThrowWindowsError(const char* call) {
   DWORD err = GetLastError();
   CHAR err_msg_buf[128];
 
@@ -53,29 +53,29 @@ void ThrowWindowsError(Env env, const char* call) {
            call,
            err_msg_buf,
            static_cast<unsigned long>(err));
-  throw Error::New(env, buf);
+  throw std::runtime_error(buf);
 }
 
 // Create a temporary certificate store, add 'cert' to it, and then
 // export it (using 'password' for encryption).
-Buffer<BYTE> CertToBuffer(Env env, PCCERT_CONTEXT cert, LPCWSTR password, DWORD export_flags) {
+std::vector<BYTE> CertToBuffer(PCCERT_CONTEXT cert, LPCWSTR password, DWORD export_flags) {
   HCERTSTORE memstore = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0, 0, 0);
   if (!memstore) {
-    ThrowWindowsError(env, "CertOpenStore(CERT_STORE_PROV_MEMORY)");
+    ThrowWindowsError("CertOpenStore(CERT_STORE_PROV_MEMORY)");
   }
   Cleanup cleanup([&]() { CertCloseStore(memstore, 0); });
   if (!CertAddCertificateContextToStore(memstore, cert, CERT_STORE_ADD_ALWAYS, nullptr)) {
-    ThrowWindowsError(env, "CertAddCertificateContextToStore()");
+    ThrowWindowsError("CertAddCertificateContextToStore()");
   }
 
   CRYPT_DATA_BLOB out = { 0, nullptr };
   if (!PFXExportCertStoreEx(memstore, &out, password, nullptr, export_flags)) {
-    ThrowWindowsError(env, "PFXExportCertStoreEx()");
+    ThrowWindowsError("PFXExportCertStoreEx()");
   }
-  Buffer<BYTE> outbuf = Buffer<BYTE>::New(env, out.cbData);
-  out.pbData = outbuf.Data();
+  std::vector<BYTE> outbuf(out.cbData);
+  out.pbData = outbuf.data();
   if (!PFXExportCertStoreEx(memstore, &out, password, nullptr, export_flags)) {
-    ThrowWindowsError(env, "PFXExportCertStoreEx()");
+    ThrowWindowsError("PFXExportCertStoreEx()");
   }
 
   return outbuf;
@@ -116,7 +116,7 @@ class CertStoreHandle {
   PCCERT_CONTEXT current_cert_ = nullptr;
 };
 
-CertStoreHandle CertOpenStore(Env env, const std::wstring& name, DWORD type) {
+CertStoreHandle CertOpenStore(const std::wstring& name, DWORD type) {
   CertStoreHandle sys_cs = ::CertOpenStore(
     CERT_STORE_PROV_SYSTEM,
     0,
@@ -124,42 +124,39 @@ CertStoreHandle CertOpenStore(Env env, const std::wstring& name, DWORD type) {
     type | CERT_STORE_READONLY_FLAG | CERT_STORE_DEFER_CLOSE_UNTIL_LAST_FREE_FLAG,
     name.data());
   if (!sys_cs) {
-    ThrowWindowsError(env, "CertOpenStore()");
+    ThrowWindowsError("CertOpenStore()");
   }
   return sys_cs;
 }
 
-Value ExportAllCertificates(const CallbackInfo& args) {
-  std::wstring sys_store_name = MultiByteToWideChar(args[0].ToString());
-  DWORD store_type = args[1].ToNumber().Uint32Value();
-  CertStoreHandle sys_cs = CertOpenStore(args.Env(), sys_store_name, store_type);
+std::vector<std::vector<BYTE>> ExportAllCertificates(
+    const std::wstring& sys_store_name, DWORD store_type) {
+  CertStoreHandle sys_cs = CertOpenStore(sys_store_name, store_type);
 
   PCCERT_CONTEXT cert;
-  Array result = Array::New(args.Env());
-  size_t index = 0;
+  std::vector<std::vector<BYTE>> result;
   while (cert = sys_cs.next()) {
-    Buffer<BYTE> buf = Buffer<BYTE>::Copy(args.Env(), cert->pbCertEncoded, cert->cbCertEncoded);
-    result[index++] = buf;
+    result.emplace_back(cert->pbCertEncoded, cert->pbCertEncoded + cert->cbCertEncoded);
   }
   return result;
 }
 
-// Export a given certificate from a system certificate store,
-// identified either by its thumbprint or its subject line.
-Value ExportCertificateAndKey(const CallbackInfo& args) {
-  std::wstring password_buf = MultiByteToWideChar(args[0].ToString());
+std::vector<BYTE> ExportCertificateAndKey(
+    DWORD store_type,
+    const std::wstring& sys_store_name,
+    bool use_thumbprint,
+    const std::vector<BYTE>& thumbprint,
+    const std::wstring& subject,
+    const std::wstring& password_buf,
+    bool require_private_key) {
   LPCWSTR password = password_buf.data();
-  std::wstring sys_store_name = MultiByteToWideChar(args[1].ToString());
-  DWORD store_type = args[2].ToNumber().Uint32Value();
-  CertStoreHandle sys_cs = CertOpenStore(args.Env(), sys_store_name, store_type);
-
+  CertStoreHandle sys_cs = CertOpenStore(sys_store_name, store_type);
   PCCERT_CONTEXT cert = nullptr;
-  Object search_spec = args[3].ToObject();
-  if (search_spec.HasOwnProperty("thumbprint")) {
-    Buffer<BYTE> thumbprint = search_spec.Get("thumbprint").As<Buffer<BYTE>>();
+
+  if (use_thumbprint) {
     CRYPT_HASH_BLOB thumbprint_blob = {
-      static_cast<DWORD>(thumbprint.Length()),
-      thumbprint.Data()
+      static_cast<DWORD>(thumbprint.size()),
+      const_cast<BYTE*>(thumbprint.data())
     };
     cert = CertFindCertificateInStore(
         sys_cs.get(),
@@ -168,35 +165,86 @@ Value ExportCertificateAndKey(const CallbackInfo& args) {
         CERT_FIND_HASH,
         &thumbprint_blob,
         nullptr);
-  } else if (search_spec.HasOwnProperty("subject")) {
+  } else {
     cert = CertFindCertificateInStore(
         sys_cs.get(),
         X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
         0,
         CERT_FIND_SUBJECT_STR,
-        MultiByteToWideChar(search_spec.Get("subject").ToString()).data(),
+        subject.data(),
         nullptr);
-  } else {
-    SetLastError(CRYPT_E_NOT_FOUND);
-  }
+  } 
+  
   if (!cert) {
-    ThrowWindowsError(args.Env(), "CertFindCertificateInStore()");
+    ThrowWindowsError("CertFindCertificateInStore()");
   }
 
   Cleanup cleanup_cert([&]() { CertFreeCertificateContext(cert); });
 
   DWORD export_flags = EXPORT_PRIVATE_KEYS;
-  if (args[4].ToBoolean()) {
+  if (require_private_key) {
     export_flags |= REPORT_NO_PRIVATE_KEY | REPORT_NOT_ABLE_TO_EXPORT_PRIVATE_KEY;
   }
-  return CertToBuffer(args.Env(), cert, password, export_flags);
+  return CertToBuffer(cert, password, export_flags);
+}
+
+
+Value ExportAllCertificatesSync(const CallbackInfo& args) {
+  std::wstring sys_store_name = MultiByteToWideChar(args[0].ToString());
+  DWORD store_type = args[1].ToNumber().Uint32Value();
+
+  try {
+    std::vector<std::vector<BYTE>> certs =
+        ExportAllCertificates(sys_store_name, store_type);
+    if (certs.size() > static_cast<uint32_t>(-1)) {
+      throw std::runtime_error("result length exceeds uint32 max");
+    }
+    Array result = Array::New(args.Env());
+    for (uint32_t i = 0; i < certs.size(); i++) {
+      result[i] = Buffer<BYTE>::Copy(args.Env(), certs[i].data(), certs[i].size());
+    }
+    return result;
+  } catch (const std::exception& e) {
+    throw Error::New(args.Env(), e.what());
+  }
+}
+
+// Export a given certificate from a system certificate store,
+// identified either by its thumbprint or its subject line.
+Value ExportCertificateAndKeySync(const CallbackInfo& args) {
+  std::wstring password_buf = MultiByteToWideChar(args[0].ToString());
+  std::wstring sys_store_name = MultiByteToWideChar(args[1].ToString());
+  DWORD store_type = args[2].ToNumber().Uint32Value();
+  bool use_thumbprint;
+  std::vector<BYTE> thumbprint;
+  std::wstring subject;
+  bool require_private_key = args[4].ToBoolean();
+
+  Object search_spec = args[3].ToObject();
+  if (search_spec.HasOwnProperty("thumbprint")) {
+    use_thumbprint = true;
+    Buffer<BYTE> thumbprint_buf = search_spec.Get("thumbprint").As<Buffer<BYTE>>();
+    thumbprint = {thumbprint_buf.Data(), thumbprint_buf.Data() + thumbprint_buf.Length()};
+  } else if (search_spec.HasOwnProperty("subject")) {
+    use_thumbprint = false;
+    subject = MultiByteToWideChar(search_spec.Get("subject").ToString());
+  } else {
+    throw Error::New(args.Env(), "Need to specify either `thumbprint` or `subject`");
+  }
+  try {
+    auto result = ExportCertificateAndKey(
+        store_type, sys_store_name, use_thumbprint, thumbprint, subject, password_buf, require_private_key);
+    return Buffer<BYTE>::Copy(args.Env(), result.data(), result.size());
+  } catch (const std::exception& e) {
+    throw Error::New(args.Env(), e.what());
+  }
 }
 
 }
 
 static Object InitWinExportCertAndKey(Env env, Object exports) {
-  exports["exportCertificateAndKey"] = Function::New(env, ExportCertificateAndKey);
-  exports["exportAllCertificates"] = Function::New(env, ExportAllCertificates);
+  exports["exportCertificateAndKey"] = Function::New(env, ExportCertificateAndKeySync);
+  exports["exportAllCertificates"] = Function::New(env, ExportAllCertificatesSync);
   Object storeTypes = Object::New(env);
   storeTypes["CERT_SYSTEM_STORE_CURRENT_SERVICE"] = Number::New(env, CERT_SYSTEM_STORE_CURRENT_SERVICE);
   storeTypes["CERT_SYSTEM_STORE_CURRENT_USER"] = Number::New(env, CERT_SYSTEM_STORE_CURRENT_USER);
