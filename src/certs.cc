@@ -16,7 +16,7 @@ struct Cleanup {
 // Throw an exception based on the last Windows error message.
 void ThrowWindowsError(const char* call) {
   DWORD err = GetLastError();
-  CHAR err_msg_buf[128];
+  CHAR err_msg_buf[256] = {};
 
   FormatMessageA(
       FORMAT_MESSAGE_FROM_SYSTEM |
@@ -36,7 +36,7 @@ void ThrowWindowsError(const char* call) {
     }
   }
 
-  char buf[256];
+  char buf[384] = {};
   snprintf(buf,
            sizeof(buf),
            "%s failed with: %s (0x%lx)",
