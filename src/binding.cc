@@ -1,6 +1,8 @@
 #include "certs.h"
 #include <napi.h>
 
+#define PACKAGE "win-export-certificate-and-key"
+
 namespace {
 using namespace Napi;
 using namespace WinExportCertificateAndKey;
@@ -36,9 +38,7 @@ Value ExportAllCertificatesSync(const CallbackInfo& args) {
   }
 }
 
-// Export a given certificate from a system certificate store,
-// identified either by its thumbprint or its subject line.
-Value ExportCertificateAndKeySync(const CallbackInfo& args) {
+ExportCertificateAndKeyArgs GatherExportCertificateAndKeyArgs(const CallbackInfo& args) {
   ExportCertificateAndKeyArgs exp_args;
   exp_args.password_buf = MultiByteToWideChar(args[0].ToString());
   exp_args.sys_store_name = MultiByteToWideChar(args[1].ToString());
@@ -56,6 +56,13 @@ Value ExportCertificateAndKeySync(const CallbackInfo& args) {
   } else {
     throw Error::New(args.Env(), "Need to specify either `thumbprint` or `subject`");
   }
+  return exp_args;
+}
+
+// Export a given certificate from a system certificate store,
+// identified either by its thumbprint or its subject line.
+Value ExportCertificateAndKeySync(const CallbackInfo& args) {
+  ExportCertificateAndKeyArgs exp_args = GatherExportCertificateAndKeyArgs(args);
   try {
     auto result = ExportCertificateAndKey(exp_args);
     return Buffer<BYTE>::Copy(args.Env(), result.data(), result.size());
@@ -64,11 +71,81 @@ Value ExportCertificateAndKeySync(const CallbackInfo& args) {
   }
 }
 
+Value ExportAllCertificatesAsync(const CallbackInfo& args) {  
+  class Worker final : public AsyncWorker {
+    public:
+      Worker(Function callback, std::wstring&& sys_store_name, DWORD store_type)
+        : AsyncWorker(callback, PACKAGE ":ExportAllCertificates"),
+          sys_store_name(std::move(sys_store_name)), store_type(store_type) {}
+      ~Worker() {}
+
+      void Execute() override {
+        results = ExportAllCertificates(sys_store_name, store_type);
+      }
+
+      void OnOK() override {
+        try {
+          Callback().Call({Env().Null(), BufferListToArray(Env(), results)});
+        } catch (const std::exception& e) {
+          throw Error::New(Env(), e.what());
+        }
+      }
+
+    private:
+      std::vector<std::vector<BYTE>> results;
+      std::wstring sys_store_name;
+      DWORD store_type;
+  };
+
+  Worker* worker = new Worker(
+      args[2].As<Function>(),
+      MultiByteToWideChar(args[0].ToString()),
+      args[1].ToNumber().Uint32Value());
+  worker->Queue();
+  return args.Env().Undefined();
+}
+
+Value ExportCertificateAndKeyAsync(const CallbackInfo& args) {
+  ExportCertificateAndKeyArgs exp_args = GatherExportCertificateAndKeyArgs(args);
+
+  class Worker final : public AsyncWorker {
+    public:
+      Worker(Function callback, ExportCertificateAndKeyArgs&& exp_args)
+        : AsyncWorker(callback, PACKAGE ":ExportCertificateAndKey"),
+          exp_args(std::move(exp_args)) {}
+      ~Worker() {}
+
+      void Execute() override {
+        result = ExportCertificateAndKey(exp_args);
+      }
+
+      void OnOK() override {
+        try {
+          Callback().Call({Env().Null(), Buffer<BYTE>::Copy(Env(), result.data(), result.size())});
+        } catch (const std::exception& e) {
+          throw Error::New(Env(), e.what());
+        }
+      }
+
+    private:
+      std::vector<BYTE> result;
+      ExportCertificateAndKeyArgs exp_args;
+  };
+
+  Worker* worker = new Worker(
+      args[5].As<Function>(),
+      std::move(exp_args));
+  worker->Queue();
+  return args.Env().Undefined();
+}
+
 }
 
 static Object InitWinExportCertAndKey(Env env, Object exports) {
   exports["exportCertificateAndKey"] = Function::New(env, ExportCertificateAndKeySync);
   exports["exportAllCertificates"] = Function::New(env, ExportAllCertificatesSync);
+  exports["exportCertificateAndKeyAsync"] = Function::New(env, ExportCertificateAndKeyAsync);
+  exports["exportAllCertificatesAsync"] = Function::New(env, ExportAllCertificatesAsync);
   Object storeTypes = Object::New(env);
   storeTypes["CERT_SYSTEM_STORE_CURRENT_SERVICE"] = Number::New(env, CERT_SYSTEM_STORE_CURRENT_SERVICE);
   storeTypes["CERT_SYSTEM_STORE_CURRENT_USER"] = Number::New(env, CERT_SYSTEM_STORE_CURRENT_USER);

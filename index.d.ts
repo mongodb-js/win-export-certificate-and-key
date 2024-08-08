@@ -32,8 +32,10 @@ declare function exportCertificateAndPrivateKey(input: LookupOptions): PfxResult
 
 declare namespace exportCertificateAndPrivateKey {
   function exportCertificateAndPrivateKey(input: LookupOptions): PfxResult;
+  function exportCertificateAndPrivateKeyAsync(input: LookupOptions): Promise<PfxResult>;
 
   function exportSystemCertificates(input: StoreOptions): string[];
+  function exportSystemCertificatesAsync(input: StoreOptions): Promise<string[]>;
 }
 
 export = exportCertificateAndPrivateKey;
