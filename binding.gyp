@@ -1,7 +1,7 @@
 {
   'targets': [{
     'target_name': 'win_export_cert',
-    'sources': [ 'src/binding.cc' ],
+    'sources': [ 'src/binding.cc', 'src/certs.cc' ],
     'include_dirs': ["<!(node -p \"require('node-addon-api').include_dir\")"],
     'dependencies': ["<!(node -p \"require('node-addon-api').gyp\")"],
     'cflags!': [ '-fno-exceptions' ],
