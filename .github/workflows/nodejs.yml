@@ -1,0 +1,38 @@
+on: [push, pull_request]
+
+name: CI
+
+jobs:
+  test:
+    name: Test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest]
+        node-version: [20.x, 22.x, 24.x]
+    runs-on: ${{matrix.os}}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Install Dependencies
+        run: npm install
+      - name: Import PFX (Windows)
+        shell: pwsh
+        env:
+          TEST_PFX_PASSWORD: "pass"
+        run: |
+          $ErrorActionPreference = "Stop"
+          $pfx = "$env:GITHUB_WORKSPACE\testkeys\certificate.pfx"
+          $pwd = ConvertTo-SecureString $env:TEST_PFX_PASSWORD -AsPlainText -Force
+
+          Import-PfxCertificate -FilePath $pfx `
+          -CertStoreLocation "Cert:\CurrentUser\My" `
+          -Password $pwd `
+          -Exportable | Out-Null
+
+          Get-ChildItem Cert:\CurrentUser\My | Where-Object HasPrivateKey | Select Subject, Thumbprint
+      - name: Test
+        run: npm test
